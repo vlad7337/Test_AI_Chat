@@ -5,7 +5,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from llama_cpp import Llama
 
-# Настройка логирования в файл
 logging.basicConfig(
     filename="ai_core.log", 
     level=logging.INFO, 
@@ -15,8 +14,7 @@ logging.basicConfig(
 
 app = FastAPI()
 
-# Загрузка модели (указан твой файл и 12 физических ядер)
-logging.info("Инициализация модели Qwen 2.5 14B...")
+logging.info("Init model Qwen 2.5 14B...")
 llm = Llama(
     model_path="./Qwen2.5-14B-Instruct-Q5_K_M.gguf",
     n_ctx=8192,
@@ -24,9 +22,9 @@ llm = Llama(
     verbose=False
 )
 llm_lock = asyncio.Lock()
-logging.info("Модель успешно загружена в ОЗУ.")
+logging.info("Succsesful loading in RAM.")
 
-# --- Функции мониторинга железа ---
+# --- Monitoring hardware ---
 def get_hardware_stats():
     stats = {
         "cpu_percent": psutil.cpu_percent(interval=None),
@@ -37,17 +35,16 @@ def get_hardware_stats():
         "temp_nvme": "N/A"
     }
     
-    # Считывание датчиков температуры
+    # Temperature
     if hasattr(psutil, "sensors_temperatures"):
         sensors = psutil.sensors_temperatures()
-        if "coretemp" in sensors: # Датчик процессора Xeon
+        if "coretemp" in sensors:
             stats["temp_cpu"] = f"{sensors['coretemp'][0].current}°C"
-        if "nvme" in sensors:     # Датчик NVMe
+        if "nvme" in sensors:
             stats["temp_nvme"] = f"{sensors['nvme'][0].current}°C"
             
     return stats
 
-# --- Маршруты страниц ---
 @app.get("/")
 async def chat_page():
     with open("chat.html", "r", encoding="utf-8") as f:
@@ -58,38 +55,35 @@ async def admin_page():
     with open("admin.html", "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-# --- API эндпоинты для админки ---
 @app.get("/api/stats")
 async def api_stats():
     return get_hardware_stats()
 
 @app.get("/api/logs")
 async def api_logs():
-    # Читаем последние 20 строк логов
     try:
         with open("ai_core.log", "r", encoding="utf-8") as f:
             lines = f.readlines()[-20:]
             return {"logs": "".join(lines)}
     except FileNotFoundError:
-        return {"logs": "Файл логов пока пуст."}
+        return {"logs": "Log-file is empty."}
 
-# --- WebSocket для чата ---
 @app.websocket("/ws/chat")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    logging.info(f"Новое подключение клиента: {websocket.client.host}")
+    logging.info(f"New connect: {websocket.client.host}")
     try:
         while True:
             user_message = await websocket.receive_text()
-            logging.info(f"Получен запрос: {user_message[:50]}...")
+            logging.info(f"Request recieved: {user_message[:50]}...")
             
             async with llm_lock:
                 await websocket.send_text("[START]")
-                logging.info("Начата генерация ответа...")
+                logging.info("Generation...")
                 
                 response = llm.create_chat_completion(
                     messages=[
-                        {"role": "system", "content": "Ты полезный ИИ-ассистент."},
+                        {"role": "system", "content": "You usefull assistant."},
                         {"role": "user", "content": user_message}
                     ],
                     max_tokens=1024,
@@ -104,7 +98,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await asyncio.sleep(0.005)
                 
                 await websocket.send_text("[END]")
-                logging.info("Генерация успешно завершена.")
+                logging.info("Generation complited.")
                 
     except WebSocketDisconnect:
-        logging.info("Клиент отключился.")
+        logging.info("Client disconnected.")
